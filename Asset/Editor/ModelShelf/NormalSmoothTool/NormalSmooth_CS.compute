@@ -1,0 +1,60 @@
+#pragma kernel CSMain
+
+struct MeshProperties
+{
+    float3 vertices;
+    float3 normals;
+    float4 tangents;
+    float3 smoothNormal;
+};
+RWStructuredBuffer<MeshProperties> MeshPropBuffer;
+
+uint vertexCount;
+
+
+float3 Obj2Tangent(float3 ori, int i)
+{
+    float3 tangent = MeshPropBuffer[i].tangents;
+    float3 normal = normalize(MeshPropBuffer[i].normals);
+    float3 bitangent  = normalize(cross(normal, tangent)* MeshPropBuffer[i].tangents.w);
+
+    float3x3 tbn = float3x3(
+        tangent,
+        bitangent,
+        normal);
+    return mul(tbn,ori);
+}
+
+float3 SmoothData(int index)
+{
+    float3 nor = float3(0,0,0);
+    float3 vertices=MeshPropBuffer[index].vertices;
+    
+    for (int i = 0; i < vertexCount; i++)
+    {
+        float3 verticecomp=MeshPropBuffer[i].vertices;
+
+        if(vertices.x == verticecomp.x &&
+            vertices.y == verticecomp.y &&
+            vertices.z == verticecomp.z)
+        {
+            nor += MeshPropBuffer[i].normals;
+        }
+
+    }
+
+    //[-1, 1] -> [0, 1]
+    //obj -> tangent
+    float3 smoothNormal = Obj2Tangent(normalize(nor), index) * 0.5f + 0.5f;
+    return smoothNormal;
+
+}
+
+[numthreads(128,1,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    MeshPropBuffer[id.x].smoothNormal=SmoothData(id.x);
+}
+
+
+

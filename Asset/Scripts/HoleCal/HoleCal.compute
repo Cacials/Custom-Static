@@ -1,0 +1,121 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+#pragma kernel CSShowResult
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+RWTexture2D<float4> Result;
+
+Texture2D<float4> ColTex;
+SamplerState sampler_ColTex;
+
+float _ColDist;
+float4 _BgCol;
+
+AppendStructuredBuffer<float2> _AllPosBuffer;
+
+//todo: IsDependent Use
+StructuredBuffer<float2> _SingleHolePosLst;
+uint _SingleHolePosCount;
+uint _MissThreshold;
+float4 _Origin_Target_Pos;
+bool _IsMiss;
+uint _MissCount=0;
+bool _IsIndependent;
+// float _Distance;
+
+StructuredBuffer<float2> _CenterPosBuffer;
+uint _CenterCount;
+
+//Filter Pixel In ColorRange
+[numthreads(32,32,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    // TODO: insert actual code here!
+    uint width;
+    uint height;
+    Result.GetDimensions(width, height);
+    
+    float2 uv = float2(id.xy / float2(width, height)); 
+    float4 col = ColTex.SampleLevel(sampler_ColTex, uv, 0);
+
+    col=pow(col,1/2.2);
+    float offset=distance(col.rgb,_BgCol);
+
+    if(abs(offset)>=_ColDist
+        && id.x>=8 && id.x<=height-8
+        && id.y>=8 && id.y<=height-8)
+    // if(abs(col.r-targetValue.r)<=_ColDist&&
+    //     abs(col.g-targetValue.g)<=_ColDist&&
+    //     abs(col.b-targetValue.b)<=_ColDist)
+    {
+        Result[id.xy] = col;
+        _AllPosBuffer.Append(id.xy);
+    }
+    else
+    {
+        Result[id.xy] = float4(0,0,0,0);
+    }
+
+    
+}
+
+//Show Points Position By white circle To Debug
+[numthreads(32,32,1)]
+void CSShowResult (uint3 id : SV_DispatchThreadID)
+{
+    Result[id.xy]=0;
+    for (int i = 0; i < _CenterCount; ++i)
+    {
+        float dist=distance(id.xy,_CenterPosBuffer[i]);
+        Result[id.xy]+=step(dist,10);
+        
+    }
+}
+
+//Transfer Independent Calculate to GPU
+bool IsContain(StructuredBuffer<float2> lst,int lstCount,float2 pos)
+{
+    for(int j = 0; j < lstCount; j++)
+    {
+        if(distance(pos,lst[j])<=0.5f)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+
+//todo: IsDependent Use
+[numthreads(128,1,1)]
+void CSIndependent (uint3 id : SV_DispatchThreadID)
+{
+
+    float dist = distance(_Origin_Target_Pos.xy, _Origin_Target_Pos.zw);
+    
+    
+    if(id.x>dist)
+    {
+        return;
+    }
+    
+        
+    float2 dir = _Origin_Target_Pos.zw - _Origin_Target_Pos.xy;
+    
+    float2 stepPos;
+    stepPos = _Origin_Target_Pos.xy+dir * id.x / dist;
+        
+    if (!IsContain(_SingleHolePosLst,_SingleHolePosCount,stepPos))
+    {
+        _MissCount++;
+    }
+
+    if (_MissCount >= _MissThreshold)
+    {
+        _IsIndependent = true;
+        return;
+    }
+        
+    _IsIndependent=false;
+}

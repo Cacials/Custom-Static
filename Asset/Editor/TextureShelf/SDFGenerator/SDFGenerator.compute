@@ -1,0 +1,125 @@
+#pragma kernel CSMain
+
+Texture2D<float4> Origin;
+SamplerState sampler_Origin;
+RWTexture2D<float4> Result;
+
+uniform int _Width;
+uniform int _Height;
+uniform int _SpreadRange;
+
+float4 _BGColor;
+
+float4 MSAA(float2 uv)
+{
+    float2 pix=float2(1 / float2(62.5, 62.5));
+    float4 col1 = Origin.SampleLevel(sampler_Origin, uv+pix/2*float2(-1,-1), 0);
+    float4 col2 = Origin.SampleLevel(sampler_Origin, uv+pix/2*float2(-1,1), 0);
+    float4 col3 = Origin.SampleLevel(sampler_Origin, uv+pix/2*float2(1,-1), 0);
+    float4 col4 = Origin.SampleLevel(sampler_Origin, uv+pix/2*float2(1,1), 0);
+    float4 col = (col1+col2+col3+col4)/4;
+
+    return col;
+}
+
+// float4 SSAA(float2 uv)
+// {
+//     
+// }
+
+bool IsWhitePixel(int2 idXY)
+{
+    // if(idXY.x<0||idXY.y||idXY.x>_Width||idXY.y>_Height)
+    // {
+    //     return false;
+    // }
+
+    float2 id2uv = idXY+float2(0.5,0.5);
+    
+    float2 uv = float2(id2uv / float2(_Width, _Height)); 
+    float4 col = Origin.SampleLevel(sampler_Origin, uv, 0);
+
+    col=pow(col,1/2.2);
+    // col-=_BGColor;
+
+    // col=MSAA(uv);
+    // if(col.r+col.g+col.b>=0.01f)
+    // {
+    //     return true;
+    // }
+
+    float r =smoothstep(0.5,0.51,col.r+col.b+col.g);
+    if(r > 0.01)
+    {
+        return true;
+    }
+    return false;
+}
+
+// //Debug用，筛选图像边界，内部为白色
+// float DebugCol(int2 idXY)
+// {
+//     float2 id = idXY+float2(0.5,0.5);
+//     uint width;
+//     uint height;
+//     Result.GetDimensions(width, height);
+//     
+//     float2 uv = float2(id / float2(width, height)); 
+//     float4 col = Origin.SampleLevel(sampler_Origin, uv, 0);
+//     // col=pow(col,1/2.2);
+//     // col-=_BGColor;
+//     float r =smoothstep(0.19,0.2,col.r+col.b+col.g);
+//     return r;
+// }
+
+
+[numthreads(8,8,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    //id超过总像素数量则return掉，避免overflow
+    if(id.x>_Width||id.y>_Height)
+    {
+        return;
+    }
+    
+    float sdfDist;
+
+    const int2 startPosition = id.xy - int2(_SpreadRange, _SpreadRange);
+
+    if(!IsWhitePixel(id.xy))
+    {
+        sdfDist=_SpreadRange;
+        for(int x=0;x<_SpreadRange*2;x++)
+        {
+            for(int y=0;y<_SpreadRange*2;y++)
+            {
+                int2 posCoord=startPosition+int2(x,y);
+                if(IsWhitePixel(posCoord) && sdfDist>distance(posCoord,id.xy))
+                {
+                    sdfDist = distance(posCoord,id.xy);
+                }
+            }
+        }
+    }
+    else
+    {
+        sdfDist=-_SpreadRange;
+        for(int x=0;x<_SpreadRange*2;x++)
+        {
+            for(int y=0;y<_SpreadRange*2;y++)
+            {
+                int2 posCoord=startPosition+int2(x,y);
+                if(!IsWhitePixel(posCoord) && sdfDist<-distance(posCoord,id.xy))
+                {
+                    sdfDist = -distance(posCoord,id.xy);
+                }
+            }
+        }
+    }
+    
+    float sdfValue = sdfDist/_SpreadRange;
+    float value = 1-(sdfValue*0.5+0.5);
+    
+    Result[id.xy] = float4(value,0,0,1);
+    // Result[id.xy] = float4(DebugCol(id.xy),0,0,1);
+}
